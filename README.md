@@ -1,3 +1,17 @@
+# This repo is used to customize MIM for Safarifone needs.
+[![Build Status](https://circleci.com/gh/safarifone/MongooseIM/tree/safarifone.svg?style=shield)](https://app.circleci.com/github/safarifone/MongooseIM/pipelines?branch=safarifone)
+
+next branching policy is used for this repo:
+
+* a dedicated [safarifone](https://github.com/safarifone/MongooseIM/tree/safarifone) branch is created  for all the customizations and releases
+* [safarifone](https://github.com/safarifone/MongooseIM/tree/safarifone) branch is set as [default branch](https://github.com/safarifone/MongooseIM/settings/branches) for the repo 
+* [master](https://github.com/safarifone/MongooseIM/tree/master) branch must be synchronized with original [opensource MIM master](https://github.com/esl/MongooseIM/tree/master/).
+* all the changes to [safarifone](https://github.com/safarifone/MongooseIM/tree/safarifone) branch must be done via PRs
+* update to the latest opensource codebase must be done by merging [master](https://github.com/safarifone/MongooseIM/tree/master) branch into [safarifone](https://github.com/safarifone/MongooseIM/tree/safarifone) (using PR)
+* custom RPMs are automatically generated and uploaded to the SFTP server by [CircleCI](https://app.circleci.com/github/safarifone/MongooseIM/pipelines?branch=safarifone)
+
+-----
+
 # MongooseIM platform
 
 [![Build Status](https://travis-ci.org/esl/MongooseIM.svg?branch=master)](https://travis-ci.org/esl/MongooseIM)

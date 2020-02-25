@@ -181,6 +181,16 @@ orbs:
               name: Build package
               command: |
                 KEEP_COVER_RUNNING=1 ./tools/travis-test.sh -p pkg -s false
+          - run:
+              name: Install LFTP
+              command: |
+                sudo apt-get update
+                sudo apt-get install lftp
+          - run:
+              name: Upload RPM
+              command: |
+                lftp "sftp://${sftp_user}:${sftp_pwd}@${sftp_host}:${sftp_port}" -e "set sftp:auto-confirm true; mput -O /uploads/mongooseim_ci tools/pkg/packages/*.rpm; exit"
+
       big_tests:
         parallelism: 1
         machine:
@@ -192,7 +202,7 @@ orbs:
             description: Version of the Erlang package to install
           preset:
             type: enum
-            enum: [internal_mnesia, mysql_redis, odbc_mssql_mnesia, ldap_mnesia,
+            enum: [internal_mnesia, mysql_redis, mysql_mnesia, odbc_mssql_mnesia, ldap_mnesia,
                    elasticsearch_and_cassandra_mnesia, pgsql_mnesia, riak_mnesia]
             description: Preset to run
             default: internal_mnesia
@@ -211,7 +221,7 @@ orbs:
           TLS_DIST: <<parameters.tls_dist>>
           ELASTICSEARCH_VERSION: 5.6.9
           CASSANDRA_VERSION: 3.9
-          TEST_SPEC: mam.spec
+          TESTSPEC: safarifone.spec
           REDIS_VERSION: 3.2.10
         steps:
           - checkout
@@ -303,19 +313,12 @@ workflows:
           platform: centos_7
           otp_package: 22.1.8-2
           context: mongooseim-org
-          filters: *all_tags
-      - mim/package:
-          name: debian_stretch
-          platform: debian_stretch
-          otp_package: 22.1.8-1
-          context: mongooseim-org
+          requires:
+            - mysql_mnesia
+            - dialyzer
+            - small_tests_22
           filters: *all_tags
       # ============= BASE BUILDS =============
-      - mim/build:
-          name: otp_21_3
-          otp_package: 21.3.8.6-1
-          context: mongooseim-org
-          filters: *all_tags
       - mim/build:
           name: otp_22
           otp_package: 22.1.8-1
@@ -323,13 +326,6 @@ workflows:
           context: mongooseim-org
           filters: *all_tags
       # ============= SMALL TESTS =============
-      - mim/small_tests:
-          name: small_tests_21_3
-          otp_package: 21.3.8.6-1
-          context: mongooseim-org
-          requires:
-            - otp_21_3
-          filters: *all_tags
       - mim/small_tests:
           name: small_tests_22
           otp_package: 22.1.8-1
@@ -345,84 +341,11 @@ workflows:
           filters: *all_tags
       # ============= MOST RECENT VERSION TESTS =============
       - mim/big_tests:
-          name: mysql_redis
+          name: mysql_mnesia
           otp_package: 22.1.8-1
-          preset: mysql_redis
+          preset: mysql_mnesia
           db: mysql
           context: mongooseim-org
           requires:
             - otp_22
-          filters: *all_tags
-      - mim/big_tests:
-          name: mssql_mnesia
-          otp_package: 22.1.8-1
-          preset: odbc_mssql_mnesia
-          db: mssql
-          context: mongooseim-org
-          requires:
-            - otp_22
-          filters: *all_tags
-      - mim/big_tests:
-          name: internal_mnesia
-          otp_package: 22.1.8-1
-          preset: internal_mnesia
-          db: mnesia
-          tls_dist: true
-          context: mongooseim-org
-          requires:
-            - otp_22
-          filters: *all_tags
-      - mim/big_tests:
-          name: elasticsearch_and_cassandra
-          otp_package: 22.1.8-1
-          preset: elasticsearch_and_cassandra_mnesia
-          db: "elasticsearch cassandra"
-          context: mongooseim-org
-          requires:
-            - otp_22
-          filters: *all_tags
-      - mim/big_tests:
-          name: riak_mnesia
-          otp_package: 22.1.8-1
-          preset: riak_mnesia
-          db: riak
-          context: mongooseim-org
-          requires:
-            - otp_22
-          filters: *all_tags
-      - mim/big_tests:
-          name: pgsql_mnesia
-          otp_package: 22.1.8-1
-          preset: pgsql_mnesia
-          db: pgsql
-          context: mongooseim-org
-          requires:
-            - otp_22
-          filters: *all_tags
-      # ============= 1 VERSION OLDER TESTS =============
-      - mim/big_tests:
-          name: ldap_mnesia
-          otp_package: 21.3.8.6-1
-          preset: ldap_mnesia
-          db: mnesia
-          context: mongooseim-org
-          requires:
-            - otp_21_3
-          filters: *all_tags
-      # ============= DOCKER IMAGE BUILD & UPLOAD =============
-      - mim/docker_image:
-          name: docker_build_and_ship
-          context: mongooseim-org
-          otp_package: 22.1.8-1
-          requires:
-            - ldap_mnesia
-            - pgsql_mnesia
-            - riak_mnesia
-            - elasticsearch_and_cassandra
-            - internal_mnesia
-            - mysql_redis
-            - mssql_mnesia
-            - dialyzer
-            - small_tests_22
-            - small_tests_21_3
           filters: *all_tags
