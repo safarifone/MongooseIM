@@ -35,8 +35,8 @@ all_tests() ->
 
 groups() ->
     G = [{mod_offline_tests, [parallel], all_tests()},
-         {with_groupchat, [], [groupchat_message_is_stored]},
-         {chatmarkers, [], [one2one_chatmarker,room_chatmarker]}
+         {with_groupchat, [], [groupchat_message_is_stored]}}
+         %{chatmarkers, [], [one2one_chatmarker,room_chatmarker]}
         ],G.
     %ct_helper:repeat_all_until_all_ok(G).
 
