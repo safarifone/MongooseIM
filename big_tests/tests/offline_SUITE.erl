@@ -75,7 +75,8 @@ init_per_group(chatmarkers, C) ->
 
 init_per_group(_, C) -> C.
 
-end_per_group(with_groupchat, C) ->
+end_per_group(Group, C) when Group =:= with_groupchat;
+                             Group =:= chatmarkers ->
     dynamic_modules:restore_modules(domain(), C),
     C;
 end_per_group(_, C) -> C.
