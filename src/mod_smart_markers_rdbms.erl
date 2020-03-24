@@ -20,8 +20,8 @@ init(Host, _) ->
     UpdateFields = [<<"msg_id">>, <<"timestamp">>],
     InsertFields = KeyFields ++ UpdateFields,
     QueryName = smart_markers_upsert,
-    {ok, QueryName} = rdbms_queries:prepare_upsert(Host, QueryName, smart_markers,
-                                                   InsertFields, UpdateFields, KeyFields),
+    ok_or_exists(rdbms_queries:prepare_upsert(Host, QueryName, smart_markers,
+                                              InsertFields, UpdateFields, KeyFields), QueryName),
     ok.
 
 %% 'from', 'to', 'thread' and 'type' keys of the chat_marker() map serve
@@ -44,6 +44,10 @@ get_chat_markers(Host, To, Thread, TS) ->
 %%--------------------------------------------------------------------
 %% local functions
 %%--------------------------------------------------------------------
+
+ok_or_exists({ok, QueryName}, QueryName) -> ok;
+ok_or_exists({error, already_exists}, _) -> ok.
+
 do_update_chat_marker(Host, #{from := From, to := To, thread := Thread,
                               type := Type, timestamp := TS, id := Id}) ->
     FromEncoded = encode_jid(From),
