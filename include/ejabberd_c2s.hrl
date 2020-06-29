@@ -76,7 +76,8 @@
                 csi_state = active :: mod_csi:state(),
                 csi_buffer = [] :: [mongoose_acc:t()],
                 hibernate_after = 0 :: non_neg_integer(),
-                replaced_pids = [] :: [{MonitorRef :: reference(), ReplacedPid :: pid()}]
+                replaced_pids = [] :: [{MonitorRef :: reference(), ReplacedPid :: pid()}],
+                handlers = #{} :: #{ term() => {module(), atom(), term()} }
                 }).
 -type aux_key() :: atom().
 -type aux_value() :: any().
@@ -131,11 +132,11 @@
 
 %% Module start with or without supervisor:
 -ifdef(NO_TRANSIENT_SUPERVISORS).
--define(SUPERVISOR_START, ?GEN_FSM:start(ejabberd_c2s, [SockData, Opts],
-                                         fsm_limit_opts(Opts) ++ ?FSMOPTS)).
+-define(SUPERVISOR_START(SockData, Opts),
+        ?GEN_FSM:start(ejabberd_c2s, [SockData, Opts], ?FSMOPTS ++ fsm_limit_opts(Opts))).
 -else.
--define(SUPERVISOR_START, supervisor:start_child(ejabberd_c2s_sup,
-                                                 [SockData, Opts])).
+-define(SUPERVISOR_START(SockData, Opts),
+        supervisor:start_child(ejabberd_c2s_sup, [SockData, Opts])).
 -endif.
 
 %% This is the timeout to apply between event when starting a new

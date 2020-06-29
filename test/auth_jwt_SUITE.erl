@@ -50,7 +50,7 @@ suite() ->
 %%--------------------------------------------------------------------
 
 init_per_suite(Config) ->
-    application:ensure_all_started(stringprep),
+    application:ensure_all_started(jid),
     Self = self(),
     ETSProcess = spawn(fun() -> ets_owner(Self) end),
     wait_for_ets(),
@@ -127,9 +127,7 @@ is_user_exists(_Config) ->
 
 % remove_user/2,3
 remove_user(_Config) ->
-    ok = ejabberd_auth_jwt:remove_user(<<"toremove3">>, ?DOMAIN1),
-    {error, not_allowed} = ejabberd_auth_jwt:remove_user(<<"toremove3">>,
-                                                         ?DOMAIN1, <<"wrongpass">>).
+    ok = ejabberd_auth_jwt:remove_user(<<"toremove3">>, ?DOMAIN1).
 
 get_vh_registered_users_number(_C) ->
     0 = ejabberd_auth_jwt:get_vh_registered_users_number(?DOMAIN1, []).
@@ -138,8 +136,10 @@ get_vh_registered_users(_C) ->
     [] = ejabberd_auth_jwt:get_vh_registered_users(?DOMAIN1, []).
 
 supported_sasl_mechanisms(_C) ->
-    Modules = [cyrsasl_plain, cyrsasl_digest, cyrsasl_scram, cyrsasl_external],
-    [true, false, false, false] =
+    Modules = [cyrsasl_plain, cyrsasl_digest, cyrsasl_external,
+               cyrsasl_scram_sha1, cyrsasl_scram_sha224, cyrsasl_scram_sha256,
+               cyrsasl_scram_sha384, cyrsasl_scram_sha512],
+    [true, false, false, false, false, false, false, false] =
         [ejabberd_auth_jwt:supports_sasl_module(?DOMAIN1, Mod) || Mod <- Modules].
 
 dirty_get_registered_users(_C) ->
