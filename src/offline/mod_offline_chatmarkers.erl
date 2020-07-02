@@ -1,7 +1,32 @@
 %%%----------------------------------------------------------------------------
 %%% @copyright (C) 2020, Erlang Solutions Ltd.
 %%% @doc
-%%%   this module optimizes offline storage for chat markers
+%%%   This module optimizes offline storage for chat markers in the next way:
+%%%
+%%%      1) It filters out chat marker packets processed by mod_smart_markers:
+%%%
+%%%          * These packets can be identified by the extra permanent Acc
+%%%            timestamp field added by mod_smart_markers.
+%%%
+%%%          * These packets are not going to mod_offline (notice the
+%%%            difference in priorities for the offline_message_hook handlers)
+%%%
+%%%          * The information about these chat markers is stored in DB,
+%%%            timestamp added by mod_smart_markers is important here!
+%%%
+%%%      2) After all the offline messages are inserted by mod_offline (notice
+%%%         the difference in priorities for the resend_offline_messages_hook
+%%%         handlers), this module adds the latest chat markers as the last
+%%%         offline messages:
+%%%
+%%%          * It extracts chat markers data stored for the user in the DB
+%%%            (with timestamps)
+%%%
+%%%          * Requests cached chat markers from mod_smart_markers that has
+%%%            timestamp older or equal to the stored one.
+%%%
+%%%          * Generates and inserts chat markers as the last offline messages
+%%%
 %%% @end
 %%%----------------------------------------------------------------------------
 -module(mod_offline_chatmarkers).
@@ -10,7 +35,7 @@
 -behaviour(mongoose_module_metrics).
 
 %% gen_mod handlers
--export([start/2, stop/1]).
+-export([start/2, stop/1, deps/2]).
 
 %% Hook handlers
 -export([inspect_packet/4,
@@ -27,16 +52,25 @@
 -callback init(Host :: jid:lserver(), Opts :: list()) -> ok.
 -callback get(Jid :: jid:jid()) -> {ok, [{Thread :: undefined | binary(),
                                           Room :: undefined | jid:jid(),
-                                          TS :: erlang:timestamp()}]}.
+                                          Timestamp :: integer()}]}.
+
+%%% Jid, Thread, and Room parameters serve as a composite database key. If
+%%% key is not available in the database, then it must be added with the
+%%% corresponding timestamp. Otherwise this function does nothing, the stored
+%%% timestamp for the composite key MUST remain unchanged!
 -callback maybe_store(Jid :: jid:jid(), Thread :: undefined | binary(),
-                      Room :: undefined | jid:jid(), TS :: erlang:timestamp()) -> ok.
+                      Room :: undefined | jid:jid(), Timestamp :: integer()) -> ok.
 -callback remove_user(Jid :: jid:jid()) -> ok.
 
 %% gen_mod callbacks
 %% ------------------------------------------------------------------
 
+-spec deps(_Host :: jid:server(), Opts :: proplists:proplist()) -> gen_mod:deps_list().
+deps(_,_)->
+    [{mod_smart_markers, hard}].
+
 start(Host, Opts) ->
-    gen_mod:start_backend_module(?MODULE, add_default_backend(Opts)),
+    gen_mod:start_backend_module(?MODULE, add_default_backend(Opts), [get, maybe_store]),
     mod_offline_chatmarkers_backend:init(Host, Opts),
     ejabberd_hooks:add(hooks(Host)),
     ok.
@@ -75,19 +109,14 @@ inspect_packet(Acc, From, To, Packet) ->
     end.
 
 maybe_store_chat_marker(Acc, From, To, Packet) ->
-    %% revert this change, muclight must forward permanent acc fields!
-    case exml_query:subelement_with_ns(Packet, ?NS_CHAT_MARKERS) of
+    case mongoose_acc:get(mod_smart_markers, timestamp, undefined, Acc) of
         undefined -> false;
-        _ ->
-            Timestamp = shift(mongoose_acc:timestamp(Acc)),
+        Timestamp when is_integer(Timestamp)->
             Room = get_room(Acc, From),
             Thread = get_thread(Packet),
             mod_offline_chatmarkers_backend:maybe_store(To, Thread, Room, Timestamp),
             true
     end.
-
-shift(TS) ->
-    usec:to_now(usec:from_now(TS) - usec:from_now({0, 10, 0})).
 
 get_room(Acc, From) ->
     case mongoose_acc:stanza_type(Acc) of

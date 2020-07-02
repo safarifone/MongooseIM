@@ -251,7 +251,7 @@ process_decoded_packet(From, To, {ok, #iq{} = IQ}, Acc, OrigPacket) ->
 process_decoded_packet(From, #jid{ luser = RoomU } = To, {ok, RequestToRoom}, Acc, OrigPacket)
   when RoomU =/= <<>> ->
     case mod_muc_light_db_backend:room_exists(jid:to_lus(To)) of
-        true -> mod_muc_light_room:handle_request(From, To, OrigPacket, RequestToRoom);
+        true -> mod_muc_light_room:handle_request(From, To, OrigPacket, RequestToRoom, Acc);
         false -> mod_muc_light_codec_backend:encode_error(
                    {error, item_not_found}, From, To, OrigPacket, make_handler_fun(Acc))
     end;
@@ -276,8 +276,10 @@ prevent_service_unavailable(Acc, _From, _To, Packet) ->
         _Type -> Acc
     end.
 
--spec get_muc_service(Acc :: {result, [exml:element()]}, From :: jid:jid(), To :: jid:jid(),
-                      NS :: binary(), ejabberd:lang()) -> {result, [exml:element()]}.
+-spec get_muc_service(Acc :: {result, [exml:element()]} | empty | {error, any()},
+                      From :: jid:jid(), To :: jid:jid(),
+                      NS :: binary(), ejabberd:lang())
+                     -> {result, [exml:element()]} | empty | {error, any()}.
 get_muc_service({result, Nodes}, _From, #jid{lserver = LServer} = _To, <<"">>, _Lang) ->
     XMLNS = case gen_mod:get_module_opt_by_subhost(
                    LServer, ?MODULE, legacy_mode, ?DEFAULT_LEGACY_MODE) of

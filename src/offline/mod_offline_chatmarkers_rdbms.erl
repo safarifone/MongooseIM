@@ -22,7 +22,7 @@ init(_Host, _Opts) ->
 
 -spec get(Jid :: jid:jid()) -> {ok, [{Thread :: undefined | binary(),
                                       Room :: undefined | jid:jid(),
-                                      TS :: erlang:timestamp()}]}.
+                                      Timestamp :: integer()}]}.
 get(#jid{lserver = Host} = Jid) ->
     JidEscaped = escape(encode_jid(Jid)),
     SelectQuery = ["SELECT thread, room, timestamp FROM offline_markers",
@@ -30,14 +30,19 @@ get(#jid{lserver = Host} = Jid) ->
     {selected, Rows} = mongoose_rdbms:sql_query(Host, SelectQuery),
     decode(Rows).
 
-
+%%% @doc
+%%% Jid, Thread, and Room parameters serve as a composite database key. If
+%%% key is not available in the database, then it must be added with the
+%%% corresponding timestamp. Otherwise this function does nothing, the stored
+%%% timestamp for the composite key MUST remain unchanged!
+%%% @end
 -spec maybe_store(Jid :: jid:jid(), Thread :: undefined | binary(),
-                  Room :: undefined | jid:jid(), TS :: erlang:timestamp()) -> ok.
-maybe_store(#jid{lserver = Host} = Jid, Thread, Room, TS) ->
+                  Room :: undefined | jid:jid(), Timestamp :: integer()) -> ok.
+maybe_store(#jid{lserver = Host} = Jid, Thread, Room, Timestamp) ->
     JidEscaped = escape(encode_jid(Jid)),
     ThreadEscaped = escape(encode_thread(Thread)),
     RoomEscaped = escape(encode_jid(Room)),
-    TSEscaped = escape(encode_timestamp(TS)),
+    TSEscaped = escape(Timestamp),
     InsertQuery = ["INSERT INTO offline_markers (jid, thread, room, timestamp) VALUES (",
                    JidEscaped, ",", ThreadEscaped, ",", RoomEscaped, ",", TSEscaped, ");"],
     Res = mongoose_rdbms:sql_query(Host, InsertQuery),
@@ -56,8 +61,6 @@ encode_jid(JID)       -> jid:to_binary(jid:to_lus(JID)).
 encode_thread(undefined) -> <<"">>;
 encode_thread(Thread)    -> Thread.
 
-encode_timestamp(TS) -> usec:from_now(TS).
-
 escape(String) when is_binary(String) -> escape_string(String);
 escape(Int) when is_integer(Int)      -> escape_int(Int).
 
@@ -67,7 +70,7 @@ escape_string(String) ->
 escape_int(Int) ->
     mongoose_rdbms:use_escaped_integer(mongoose_rdbms:escape_integer(Int)).
 
-%% add new record if key not available, otherwise no changes to the table
+%% add new record if key is not available, otherwise no changes to the table
 check_insert_result({error,duplicate_key}) -> ok;
 check_insert_result({updated, 1}) -> ok;
 check_insert_result(Result) ->
@@ -86,5 +89,5 @@ decode_thread(<<"">>)        -> undefined;
 decode_thread(EncodedThread) -> EncodedThread.
 
 decode_timestamp(EncodedTS) ->
-    usec:to_now(mongoose_rdbms:result_to_integer(EncodedTS)).
+    mongoose_rdbms:result_to_integer(EncodedTS).
 

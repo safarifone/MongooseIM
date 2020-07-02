@@ -49,7 +49,6 @@
          is_user_exists/2,
          is_user_exists_in_other_modules/3,
          remove_user/2,
-         remove_user/3,
          supports_sasl_module/2,
          entropy/1
         ]).
@@ -68,7 +67,7 @@
               passterm/0]).
 
 -type authmodule() :: module().
--type passterm() :: binary() | mongoose_scram:scram_tuple().
+-type passterm() :: binary() | mongoose_scram:scram_tuple() | mongoose_scram:scram_map().
 
 -define(METRIC(Name), [backends, auth, Name]).
 
@@ -327,8 +326,7 @@ do_try_register_in_backend([], _, _, _) ->
 do_try_register_in_backend([M | Backends], LUser, LServer, Password) ->
     case M:try_register(LUser, LServer, Password) of
         ok ->
-            ejabberd_hooks:run(register_user, LServer,
-                [LUser, LServer]);
+            mongoose_hooks:register_user(LServer, ok, LUser);
         _ ->
             do_try_register_in_backend(Backends, LUser, LServer, Password)
     end.
@@ -407,7 +405,7 @@ do_get_vh_registered_users_number(LServer, Opts) ->
 
 %% @doc Get the password of the user.
 -spec get_password(User :: jid:user(),
-                   Server :: jid:server()) -> binary() | false.
+                   Server :: jid:server()) -> ejabberd_auth:passterm() | false.
 get_password(User, Server) ->
     LUser = jid:nodeprep(User),
     LServer = jid:nameprep(Server),
@@ -552,47 +550,13 @@ do_remove_user(LUser, LServer) ->
             Acc = mongoose_acc:new(#{ location => ?LOCATION,
                                       lserver => LServer,
                                       element => undefined }),
-            ejabberd_hooks:run_fold(remove_user, LServer, Acc, [LUser, LServer]),
+            mongoose_hooks:remove_user(LServer, Acc, LUser),
             ok;
         false ->
             ?ERROR_MSG("event=backends_disallow_user_removal,user=~s,server=~s,backends=~p",
                        [LUser, LServer, AuthModules]),
             {error, not_allowed}
     end.
-
-%% @doc Try to remove user if the provided password is correct.
-%% The removal is attempted in each auth method provided:
-%% when one returns 'ok' the loop stops;
-%% if no method returns 'ok' then it returns the error message
-%% indicated by the last method attempted.
--spec remove_user(User :: jid:user(),
-                  Server :: jid:server(),
-                  Password :: binary()
-                  ) -> ok | not_exists | not_allowed | bad_request | error.
-remove_user(User, Server, Password) ->
-    LUser = jid:nodeprep(User),
-    LServer = jid:nameprep(Server),
-    do_remove_user(LUser, LServer, Password).
-
-do_remove_user(LUser, LServer, _) when LUser =:= error; LServer =:= error ->
-    error;
-do_remove_user(LUser, LServer, Password) ->
-    R = lists:foldl(
-        fun(_M, ok = Res) ->
-            Res;
-            (M, _) ->
-                M:remove_user(LUser, LServer, Password)
-        end, error, auth_modules(LServer)),
-    case R of
-        ok ->
-            Acc = mongoose_acc:new(#{ location => ?LOCATION,
-                              lserver => LServer,
-                              element => undefined }),
-            ejabberd_hooks:run_fold(remove_user, LServer, Acc, [LUser, LServer]);
-        _ ->
-            none
-    end,
-    R.
 
 %% @doc Calculate informational entropy.
 -spec entropy(iolist()) -> float().

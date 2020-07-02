@@ -148,7 +148,7 @@
 
 -type typedef() :: [typedef_basic()] | typedef_basic().
 
--type typedef_basic() :: integer | binary | float. %% most basic primitives, string is a binary
+-type typedef_basic() :: boolean | integer | binary | float. %% most basic primitives, string is a binary
 
 -type argspec() :: typedef()
                   | {atom(), typedef()} %% a named argument
@@ -330,7 +330,7 @@ register_commands(Commands) ->
         fun(Command) ->
             check_registration(Command), %% may throw
             ets:insert_new(mongoose_commands, Command),
-            ejabberd_hooks:run_fold(register_command, global, [Command], []),
+            mongoose_hooks:register_command(global, Command),
             ok
         end,
         Commands).
@@ -340,7 +340,7 @@ unregister_commands(Commands) ->
     lists:foreach(
         fun(Command) ->
             ets:delete_object(mongoose_commands, Command),
-            ejabberd_hooks:run_fold(unregister_command, global, [Command], [])
+            mongoose_hooks:unregister_command(global, Command)
         end,
         Commands).
 
@@ -424,6 +424,8 @@ maybe_ignore_result(_, Res) ->
 check_type(ok, _) ->
     ok;
 check_type(A, A) ->
+    true;
+check_type({_Name, boolean}, Value) when is_boolean(Value) ->
     true;
 check_type({_Name, binary}, Value) when is_binary(Value) ->
     true;

@@ -1,8 +1,7 @@
 %%%----------------------------------------------------------------------------
 %%% @copyright (C) 2020, Erlang Solutions Ltd.
 %%% @doc
-%%%    mnesia backend for mod_smart_markers,
-%%%    prototyping only
+%%%    RDBMS backend for mod_smart_markers
 %%% @end
 %%%----------------------------------------------------------------------------
 -module(mod_smart_markers_rdbms).
@@ -20,43 +19,42 @@ init(Host, _) ->
     UpdateFields = [<<"msg_id">>, <<"timestamp">>],
     InsertFields = KeyFields ++ UpdateFields,
     QueryName = smart_markers_upsert,
-    ok_or_exists(rdbms_queries:prepare_upsert(Host, QueryName, smart_markers,
-                                              InsertFields, UpdateFields, KeyFields), QueryName),
+    rdbms_queries:prepare_upsert(Host, QueryName, smart_markers,
+                                 InsertFields, UpdateFields, KeyFields),
     ok.
 
-%% 'from', 'to', 'thread' and 'type' keys of the chat_marker() map serve
-%% as composite database key. if key is not available in the database, then
-%% chat marker must be added. otherwise this function should update chat
-%% marker record for that composite key.
+%%% @doc
+%%% 'from', 'to', 'thread' and 'type' keys of the ChatMarker map serve
+%%% as a composite database key. If key is not available in the database,
+%%% then chat marker must be added. Otherwise this function must update
+%%% chat marker record for that composite key.
+%%% @end
 -spec update_chat_marker(Host :: jid:lserver(),
                          ChatMarker :: mod_smart_markers:chat_marker()) -> ok.
 update_chat_marker(Host, ChatMarker) ->
     do_update_chat_marker(Host, ChatMarker).
 
-%% this function must return the latest chat markers sent to the
-%% user/room (with or w/o thread) later than provided timestamp.
+%%% @doc
+%%% This function must return the latest chat markers sent to the
+%%% user/room (with or w/o thread) later than provided timestamp.
+%%% @end
 -spec get_chat_markers(Host :: jid:lserver(), To :: jid:jid(),
                        Thread :: mod_smart_markers:maybe_thread(),
-                       TS :: erlang:timestamp()) -> [mod_smart_markers:chat_marker()].
+                       Timestamp :: integer()) -> [mod_smart_markers:chat_marker()].
 get_chat_markers(Host, To, Thread, TS) ->
     do_get_chat_markers(Host, To, Thread, TS).
 
 %%--------------------------------------------------------------------
 %% local functions
 %%--------------------------------------------------------------------
-
-ok_or_exists({ok, QueryName}, QueryName) -> ok;
-ok_or_exists({error, already_exists}, _) -> ok.
-
 do_update_chat_marker(Host, #{from := From, to := To, thread := Thread,
                               type := Type, timestamp := TS, id := Id}) ->
     FromEncoded = encode_jid(From),
     ToEncoded = encode_jid(To),
     ThreadEncoded = encode_thread(Thread),
     TypeEncoded = encode_type(Type),
-    TSEncoded = encode_timestamp(TS),
     KeyValues = [FromEncoded, ToEncoded, ThreadEncoded, TypeEncoded],
-    UpdateValues = [Id, TSEncoded],
+    UpdateValues = [Id, TS],
     InsertValues = KeyValues ++ UpdateValues,
     Res = rdbms_queries:execute_upsert(Host, smart_markers_upsert,
                                        InsertValues, UpdateValues, KeyValues),
@@ -65,7 +63,7 @@ do_update_chat_marker(Host, #{from := From, to := To, thread := Thread,
 do_get_chat_markers(Host, To, Thread, TS) ->
     ToEscaped = escape(encode_jid(To)),
     ThreadEscaped = escape(encode_thread(Thread)),
-    TSEscaped = escape(encode_timestamp(TS)),
+    TSEscaped = escape(TS),
     SelectQuery = [
         "select from_jid, to_jid, thread, type, msg_id, timestamp from smart_markers"
         " WHERE to_jid = ", ToEscaped, " AND thread = ", ThreadEscaped,
@@ -81,8 +79,6 @@ encode_thread(Thread)    -> Thread.
 encode_type(received)     -> <<"R">>;
 encode_type(displayed)    -> <<"D">>;
 encode_type(acknowledged) -> <<"A">>.
-
-encode_timestamp(TS) -> usec:from_now(TS).
 
 escape(String) when is_binary(String) -> escape_string(String);
 escape(Int) when is_integer(Int)      -> escape_int(Int).
@@ -121,5 +117,5 @@ decode_type(<<"D">>) -> displayed;
 decode_type(<<"A">>) -> acknowledged.
 
 decode_timestamp(EncodedTS) ->
-    usec:to_now(mongoose_rdbms:result_to_integer(EncodedTS)).
+    mongoose_rdbms:result_to_integer(EncodedTS).
 

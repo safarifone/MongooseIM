@@ -29,7 +29,7 @@
 -behaviour(mongoose_module_metrics).
 
 -export([archive_size/4,
-         archive_message/9,
+         archive_message/10,
          lookup_messages/3]).
 
 %% Helpers for debugging
@@ -173,28 +173,26 @@ stop_worker(Proc) ->
 
 -spec archive_message(_Result, jid:server(), MessID :: mod_mam:message_id(),
                       ArchiveID :: mod_mam:archive_id(), LocJID :: jid:jid(),
-                      RemJID :: jid:jid(), SrcJID :: jid:jid(), Dir :: atom(),
+                      RemJID :: jid:jid(), SrcJID :: jid:jid(), OriginID :: binary(), Dir :: atom(),
                       Packet :: any()) -> ok.
 archive_message(_Result, Host,
-                MessID, ArcID, LocJID, RemJID, SrcJID, Dir, Packet)
+                MessID, ArcID, LocJID, RemJID, SrcJID, OriginID, Dir, Packet)
         when is_integer(ArcID) ->
-    Row = mod_mam_rdbms_arch:prepare_message(Host, MessID, ArcID, LocJID,
-                                            RemJID, SrcJID, Dir, Packet),
-
+    Args = [Host, MessID, ArcID, LocJID, RemJID, SrcJID, OriginID, Dir, Packet],
     Worker = select_worker(Host, ArcID),
     WorkerPid = whereis(Worker),
     %% Send synchronously if queue length is too long.
     case is_overloaded(WorkerPid) of
         false ->
-            gen_server:cast(Worker, {archive_message, Row});
+            gen_server:cast(Worker, {archive_message, Args});
         true ->
             {Pid, MonRef} = spawn_monitor(fun() ->
-                                                  gen_server:cast(Worker, {archive_message, Row})
+                                                  gen_server:cast(Worker, {archive_message, Args})
                                           end),
             receive
                 {'DOWN', MonRef, process, Pid, normal} -> ok;
                 {'DOWN', MonRef, process, Pid, _} ->
-                    ejabberd_hooks:run(mam_drop_message, Host, [Host]),
+                    mongoose_metrics:update(Host, modMamDropped, 1),
                     {error, timeout}
             end
     end.
@@ -250,12 +248,14 @@ do_run_flush(MessageCount, State = #state{host = Host, max_batch_size = MaxSize,
     cancel_and_flush_timer(TRef),
     ?DEBUG("Flushed ~p entries.", [MessageCount]),
 
+    Rows = [apply(mod_mam_rdbms_arch, prepare_message, Args) || Args <- Acc],
+
     InsertResult =
         case MessageCount of
             MaxSize ->
-                mongoose_rdbms:execute(Host, insert_mam_messages, lists:append(Acc));
+                mongoose_rdbms:execute(Host, insert_mam_messages, lists:append(Rows));
             OtherSize ->
-                Results = [mongoose_rdbms:execute(Host, insert_mam_message, Row) || Row <- Acc],
+                Results = [mongoose_rdbms:execute(Host, insert_mam_message, Row) || Row <- Rows],
                 case lists:keyfind(error, 1, Results) of
                     false -> {updated, OtherSize};
                     Error -> Error
@@ -265,12 +265,15 @@ do_run_flush(MessageCount, State = #state{host = Host, max_batch_size = MaxSize,
     case InsertResult of
         {updated, _Count} -> ok;
         {error, Reason} ->
-            ejabberd_hooks:run(mam_drop_messages, Host, [Host, MessageCount]),
+            mongoose_metrics:update(Host, modMamDropped2, MessageCount),
             ?ERROR_MSG("archive_message query failed with reason ~p", [Reason]),
             ok
     end,
+
+    [apply(mod_mam_rdbms_arch, retract_message, Args) || Args <- Acc],
+
     spawn_link(fun() ->
-                       ejabberd_hooks:run(mam_flush_messages, Host, [Host, MessageCount])
+                       mongoose_metrics:update(Host, modMamFlushed, MessageCount)
                end),
     erlang:garbage_collect(),
     State#state{acc=[], flush_interval_tref=undefined}.
@@ -319,14 +322,14 @@ init([Host, N, MaxSize]) ->
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
 
-handle_cast({archive_message, Row},
+handle_cast({archive_message, Args},
             State=#state{acc=Acc, flush_interval_tref=TRef, flush_interval=Int,
                          max_batch_size=Max}) ->
     TRef2 = case {Acc, TRef} of
                 {[], undefined} -> erlang:send_after(Int, self(), flush);
                 {_, _} -> TRef
             end,
-    State2 = State#state{acc=[Row|Acc], flush_interval_tref=TRef2},
+    State2 = State#state{acc=[Args|Acc], flush_interval_tref=TRef2},
     case length(Acc) + 1 >= Max of
         true -> {noreply, run_flush(State2)};
         false -> {noreply, State2}

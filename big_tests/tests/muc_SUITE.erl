@@ -2918,7 +2918,8 @@ disco_features_with_mam(Config) ->
                                   ?NS_RSM,
                                   <<"vcard-temp">>,
                                   mam_helper:mam_ns_binary_v04(),
-                                  mam_helper:mam_ns_binary_v06()]).
+                                  mam_helper:mam_ns_binary_v06(),
+                                  mam_helper:retract_ns()]).
 
 disco_rooms(Config) ->
     escalus:fresh_story(Config, [{alice, 1}], fun(Alice) ->
@@ -2953,7 +2954,8 @@ disco_info_with_mam(Config) ->
                                          <<"muc_moderated">>,
                                          <<"muc_unsecured">>,
                                          mam_helper:mam_ns_binary_v04(),
-                                         mam_helper:mam_ns_binary_v06()]).
+                                         mam_helper:mam_ns_binary_v06(),
+                                         mam_helper:retract_ns()]).
 
 disco_items(Config) ->
     escalus:fresh_story(Config, [{alice, 1}, {bob, 1}], fun(Alice, Bob) ->
@@ -4997,7 +4999,8 @@ get_nick(User) ->
 %%--------------------------------------------------------------------
 
 invite_has_reason(Stanza) ->
-    exml_query:path(Stanza, [{element, <<"x">>}, {element, <<"reason">>}, cdata]) =/= undefined.
+    exml_query:path(Stanza, [{element, <<"x">>}, {element, <<"invite">>},
+                             {element, <<"reason">>}, cdata]) =/= undefined.
 
 has_reason(Stanza) ->
     exml_query:path(Stanza, [{element, <<"x">>}, {element, <<"item">>},

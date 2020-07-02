@@ -56,7 +56,7 @@
 -export([get_personal_data/2]).
 
 %%private
--export([archive_message/8]).
+-export([archive_message/9]).
 -export([lookup_messages/2]).
 -export([archive_id_int/2]).
 
@@ -84,7 +84,8 @@
          make_fin_element/4,
          parse_prefs/1,
          borders_decode/1,
-         is_mam_result_message/1]).
+         is_mam_result_message/1,
+         features/2]).
 
 %% Forms
 -import(mod_mam_utils,
@@ -114,7 +115,7 @@
 
 %% ----------------------------------------------------------------------
 %% Other types
--type archive_behaviour()   :: atom(). % roster | always | never.
+-type archive_behaviour()   :: roster | always | never.
 -type message_id()          :: non_neg_integer().
 
 -type archive_id()          :: non_neg_integer().
@@ -152,7 +153,7 @@
 -spec get_personal_data(gdpr:personal_data(), jid:jid()) -> gdpr:personal_data().
 get_personal_data(Acc, #jid{ lserver = LServer } = JID) ->
     Schema = ["id", "from", "message"],
-    Entries = ejabberd_hooks:run_fold(get_mam_pm_gdpr_data, LServer, [], [JID]),
+    Entries = mongoose_hooks:get_mam_pm_gdpr_data(LServer, [], JID),
     [{mam_pm, Schema, Entries} | Acc].
 
 -spec delete_archive(jid:server(), jid:user()) -> 'ok'.
@@ -196,8 +197,7 @@ start(Host, Opts) ->
 
     %% `parallel' is the only one recommended here.
     IQDisc = gen_mod:get_opt(iqdisc, Opts, parallel), %% Type
-    mod_disco:register_feature(Host, ?NS_MAM_04),
-    mod_disco:register_feature(Host, ?NS_MAM_06),
+    [mod_disco:register_feature(Host, Feature) || Feature <- features(?MODULE, Host)],
     gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_MAM_04,
                                   ?MODULE, process_mam_iq, IQDisc),
     gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_MAM_06,
@@ -229,8 +229,7 @@ stop(Host) ->
     ejabberd_hooks:delete(get_personal_data, Host, ?MODULE, get_personal_data, 50),
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_MAM_04),
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_MAM_06),
-    mod_disco:unregister_feature(Host, ?NS_MAM_04),
-    mod_disco:unregister_feature(Host, ?NS_MAM_06),
+    [mod_disco:unregister_feature(Host, Feature) || Feature <- features(?MODULE, Host)],
     ok.
 
 %% ----------------------------------------------------------------------
@@ -246,34 +245,31 @@ stop(Host) ->
 process_mam_iq(From=#jid{lserver=Host}, To, Acc, IQ) ->
     mod_mam_utils:maybe_log_deprecation(IQ),
     Action = mam_iq:action(IQ),
-    Res = case is_action_allowed(Action, From, To) of
+    case is_action_allowed(Action, From, To) of
         true  ->
             case mod_mam_utils:wait_shaper(Host, Action, From) of
                 ok ->
-                    handle_error_iq(Host, To, Action,
+                    handle_error_iq(Host, Acc, To, Action,
                                     handle_mam_iq(Action, From, To, IQ));
                 {error, max_delay_reached} ->
                     ?WARNING_MSG("issue=max_delay_reached, action=~p, host=~p, from=~p",
                                  [Action, Host, From]),
-                    ejabberd_hooks:run(mam_drop_iq, Host,
-                                       [Host, To, IQ, Action, max_delay_reached]),
-                    return_max_delay_reached_error_iq(IQ)
+                    mongoose_metrics:update(Host, modMamDroppedIQ, 1),
+                    {Acc, return_max_delay_reached_error_iq(IQ)}
             end;
         false ->
-            ejabberd_hooks:run(mam_drop_iq, Host,
-                               [Host, To, IQ, Action, action_not_allowed]),
-            return_action_not_allowed_error_iq(IQ)
-    end,
-    {Acc, Res}.
+            mongoose_metrics:update(Host, modMamDroppedIQ, 1),
+            {Acc, return_action_not_allowed_error_iq(IQ)}
+    end.
 
 
 %% @doc Handle an outgoing message.
 %%
 %% Note: for outgoing messages, the server MUST use the value of the 'to'
 %%       attribute as the target JID.
--spec user_send_packet(Acc :: map(), From :: jid:jid(),
+-spec user_send_packet(Acc :: mongoose_acc:t(), From :: jid:jid(),
                        To :: jid:jid(),
-                       Packet :: exml:element()) -> map().
+                       Packet :: exml:element()) -> mongoose_acc:t().
 user_send_packet(Acc, From, To, Packet) ->
     ?DEBUG("Send packet~n    from ~p ~n    to ~p~n    packet ~p.",
            [From, To, Packet]),
@@ -487,11 +483,12 @@ handle_package(Dir, ReturnMessID,
          andalso should_archive_if_groupchat(Host, exml_query:attr(Packet, <<"type">>)) of
         true ->
             ArcID = archive_id_int(Host, LocJID),
+            OriginID = mod_mam_utils:get_origin_id(Packet),
             case is_interesting(Host, LocJID, RemJID, ArcID) of
                 true ->
                     MessID = generate_message_id(),
                     Result = archive_message(Host, MessID, ArcID,
-                                             LocJID, RemJID, SrcJID, Dir, Packet),
+                                             LocJID, RemJID, SrcJID, OriginID, Dir, Packet),
                     return_external_message_id_if_ok(ReturnMessID, Result, MessID);
                 false ->
                     undefined
@@ -529,12 +526,12 @@ is_interesting(Host, LocJID, RemJID, ArcID) ->
 -spec archive_id_int(jid:server(), jid:jid()) ->
                             non_neg_integer() | undefined.
 archive_id_int(Host, ArcJID=#jid{}) ->
-    ejabberd_hooks:run_fold(mam_archive_id, Host, undefined, [Host, ArcJID]).
+    mongoose_hooks:mam_archive_id(Host, undefined, ArcJID).
 
 
 -spec archive_size(jid:server(), archive_id(), jid:jid()) -> integer().
 archive_size(Host, ArcID, ArcJID=#jid{}) ->
-    ejabberd_hooks:run_fold(mam_archive_size, Host, 0, [Host, ArcID, ArcJID]).
+    mongoose_hooks:mam_archive_size(Host, 0, ArcID, ArcJID).
 
 
 -spec get_behaviour(jid:server(), archive_id(), LocJID :: jid:jid(),
@@ -542,16 +539,15 @@ archive_size(Host, ArcID, ArcJID=#jid{}) ->
 get_behaviour(Host, ArcID,
               LocJID=#jid{},
               RemJID=#jid{}, DefaultBehaviour) ->
-    ejabberd_hooks:run_fold(mam_get_behaviour, Host, DefaultBehaviour,
-                            [Host, ArcID, LocJID, RemJID]).
+  mongoose_hooks:mam_get_behaviour(Host, DefaultBehaviour, ArcID, LocJID, RemJID).
 
 
 -spec set_prefs(jid:server(), archive_id(), ArcJID :: jid:jid(),
                 DefaultMode :: atom(), AlwaysJIDs :: [jid:literal_jid()],
                 NeverJIDs :: [jid:literal_jid()]) -> any().
 set_prefs(Host, ArcID, ArcJID, DefaultMode, AlwaysJIDs, NeverJIDs) ->
-    ejabberd_hooks:run_fold(mam_set_prefs, Host, {error, not_implemented},
-                            [Host, ArcID, ArcJID, DefaultMode, AlwaysJIDs, NeverJIDs]).
+    mongoose_hooks:mam_set_prefs(Host, {error, not_implemented},
+                                 ArcID, ArcJID, DefaultMode, AlwaysJIDs, NeverJIDs).
 
 
 %% @doc Load settings from the database.
@@ -559,14 +555,11 @@ set_prefs(Host, ArcID, ArcJID, DefaultMode, AlwaysJIDs, NeverJIDs) ->
                 ArcJID :: jid:jid(), GlobalDefaultMode :: archive_behaviour()
                ) -> preference() | {error, Reason :: term()}.
 get_prefs(Host, ArcID, ArcJID, GlobalDefaultMode) ->
-    ejabberd_hooks:run_fold(mam_get_prefs, Host,
-                            {GlobalDefaultMode, [], []},
-                            [Host, ArcID, ArcJID]).
-
+    mongoose_hooks:mam_get_prefs(Host, {GlobalDefaultMode, [], []}, ArcID, ArcJID).
 
 -spec remove_archive_hook(jid:server(), archive_id(), jid:jid()) -> 'ok'.
 remove_archive_hook(Host, ArcID, ArcJID=#jid{}) ->
-    ejabberd_hooks:run(mam_remove_archive, Host, [Host, ArcID, ArcJID]),
+    mongoose_hooks:mam_remove_archive(Host, ok, ArcID, ArcJID),
     ok.
 
 -spec lookup_messages(Host :: jid:server(),
@@ -587,8 +580,7 @@ lookup_messages_without_policy_violation_check(Host, #{search_text := SearchText
             {error, 'not-supported'};
         false ->
             StartT = os:timestamp(),
-            R = ejabberd_hooks:run_fold(mam_lookup_messages, Host, {ok, {0, 0, []}},
-                                        [Host, Params]),
+            R = mongoose_hooks:mam_lookup_messages(Host, {ok, {0, 0, []}}, Params),
             Diff = timer:now_diff(os:timestamp(), StartT),
             mongoose_metrics:update(Host, [backends, ?MODULE, lookup], Diff),
             R
@@ -597,12 +589,13 @@ lookup_messages_without_policy_violation_check(Host, #{search_text := SearchText
 
 -spec archive_message(Host :: jid:server(), MessID :: message_id(),
                       ArcID :: archive_id(), LocJID :: jid:jid(), RemJID :: jid:jid(),
-                      SrcJID :: jid:jid(), Dir :: incoming | outgoing, Packet :: term()
+                      SrcJID :: jid:jid(), OriginID :: binary() | none,
+                      Dir :: incoming | outgoing, Packet :: term()
                      ) -> ok | {error, timeout}.
-archive_message(Host, MessID, ArcID, LocJID, RemJID, SrcJID, Dir, Packet) ->
+archive_message(Host, MessID, ArcID, LocJID, RemJID, SrcJID, OriginID, Dir, Packet) ->
     StartT = os:timestamp(),
-    R = ejabberd_hooks:run_fold(mam_archive_message, Host, ok,
-                                [Host, MessID, ArcID, LocJID, RemJID, SrcJID, Dir, Packet]),
+    R = mongoose_hooks:mam_archive_message(Host, ok, MessID, ArcID,
+                                           LocJID, RemJID, SrcJID, OriginID, Dir, Packet),
     Diff = timer:now_diff(os:timestamp(), StartT),
     mongoose_metrics:update(Host, [backends, ?MODULE, archive], Diff),
     R.
@@ -626,11 +619,11 @@ message_row_to_xml(MamNs, {MessID, SrcJID, Packet}, QueryID, SetClientNs)  ->
 message_row_to_ext_id({MessID, _, _}) ->
     mess_id_to_external_binary(MessID).
 
-handle_error_iq(Host, To, Action, {error, Reason, IQ}) ->
-    ejabberd_hooks:run(mam_drop_iq, Host, [Host, To, IQ, Action, Reason]),
-    IQ;
-handle_error_iq(_Host, _To, _Action, IQ) ->
-    IQ.
+handle_error_iq(Host, Acc, _To, _Action, {error, _Reason, IQ}) ->
+    mongoose_metrics:update(Host, modMamDroppedIQ, 1),
+    {Acc, IQ};
+handle_error_iq(_Host, Acc, _To, _Action, IQ) ->
+    {Acc, IQ}.
 
 -spec return_action_not_allowed_error_iq(jlib:iq()) -> jlib:iq().
 return_action_not_allowed_error_iq(IQ) ->

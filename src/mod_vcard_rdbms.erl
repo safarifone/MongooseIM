@@ -105,7 +105,7 @@ set_vcard(User, VHost, VCard, VCardSearch) ->
                            SMiddle, SNickname, SOrgName,
                            SOrgUnit, SVCARD, SUsername),
 
-    ejabberd_hooks:run(vcard_set, VHost, [LUser, VHost, VCard]),
+    mongoose_hooks:vcard_set(VHost, ok, LUser, VCard),
     ok.
 
 search(LServer, Data) ->
@@ -144,7 +144,7 @@ filter_fields([], RestrictionSQLIn, LServer) ->
      "server = ", mongoose_rdbms:use_escaped_string(mongoose_rdbms:escape_string(LServer))];
 filter_fields([{SVar, [Val]} | Ds], RestrictionSQL, LServer)
   when is_binary(Val) and (Val /= <<"">>) ->
-    LVal = stringprep:tolower(Val),
+    LVal = jid:str_tolower(Val),
     NewRestrictionSQL =
         case SVar of
             <<"user">>     -> make_val(RestrictionSQL, "lusername", LVal);
